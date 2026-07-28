@@ -9,11 +9,11 @@ permissions:
   contents: write
   packages: write
 
-# Version creation and floating-tag updates must never race. Current GitHub
-# concurrency supports a FIFO queue instead of discarding an intermediate push.
+# Version creation and floating-tag updates must never race. Keep the active
+# publication running and retain the newest pending main update.
 concurrency:
   group: publish-agent-dev-base
-  queue: max
+  cancel-in-progress: false
 
 env:
   LOCAL_IMAGE: localhost/agent-dev-base:fedora-44
