@@ -1,0 +1,12 @@
+# Machine-specific mise overrides
+mise.local.toml
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Temporary output
+*.log
+.tmp/
+
