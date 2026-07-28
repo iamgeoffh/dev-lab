@@ -40,10 +40,37 @@ containers/agent-dev-base/tests/smoke-test.sh \
 ```
 
 The supported local image name is
-`localhost/agent-dev-base:fedora-44`. If publishing is added later, the
-intended naming pattern is `ghcr.io/<owner>/agent-dev-base:fedora-44`.
-Publishing is not currently configured or documented as an operational
-workflow.
+`localhost/agent-dev-base:fedora-44`.
+
+## Published image
+
+Advancing `main` starts the repository's publishing workflow. After its first
+successful run, the image is available as:
+
+```text
+ghcr.io/iamgeoffh/agent-dev-base:<version>
+```
+
+Each immutable version has the form `v0.1.<workflow-run-number>`. The workflow
+creates an annotated Git tag with the identical name on the exact source
+commit, so `git show <version>` retrieves the source corresponding to a
+registry version. The current hosted workflow publishes `linux/amd64`. It also
+maintains these convenience tags:
+
+- `fedora-44`, the newest published Fedora 44 build from the current `main`
+  tip; and
+- `latest`, currently an alias for `fedora-44`.
+
+For reproducible project images, extend an immutable version rather than a
+floating tag:
+
+```Containerfile
+FROM ghcr.io/iamgeoffh/agent-dev-base:v0.1.123
+```
+
+The first live GHCR publication still depends on the workflow reaching `main`
+and the repository's Actions/package permissions allowing it. Package
+visibility is managed in GHCR after creation.
 
 ## Extending the image
 

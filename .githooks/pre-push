@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+run_tests=false
+
+while read -r _local_ref local_oid remote_ref _remote_oid; do
+    # Deleting a remote ref does not introduce untested image source.
+    if [[ "${local_oid}" =~ ^0+$ ]]; then
+        continue
+    fi
+
+    case "${remote_ref}" in
+        refs/heads/main)
+            ;;
+        refs/heads/*)
+            run_tests=true
+            ;;
+    esac
+done
+
+if [[ "${run_tests}" == "false" ]]; then
+    echo "pre-push: no non-main branch update; skipping local image test"
+    exit 0
+fi
+
+echo "pre-push: testing agent-dev-base before non-main branch update"
+just test

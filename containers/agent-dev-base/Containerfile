@@ -6,8 +6,7 @@ ARG MISE_SHA256_AARCH64=f115d1f911b8eed1bdc9d889d94ff6fdaf892131d573b5678914b2bc
 
 LABEL org.opencontainers.image.title="agent-dev-base" \
       org.opencontainers.image.description="Headless Fedora base image for coding-agent development containers" \
-      org.opencontainers.image.source="https://github.com/geoff-hill/dev-lab" \
-      org.opencontainers.image.version="fedora-44" \
+      org.opencontainers.image.source="https://github.com/iamgeoffh/dev-lab" \
       org.opencontainers.image.base.name="registry.fedoraproject.org/fedora:44" \
       org.opencontainers.image.licenses="Apache-2.0"
 
@@ -72,3 +71,6 @@ USER dev
 WORKDIR /workspace
 
 CMD ["/bin/bash"]
+
+LABEL org.opencontainers.image.version="fedora-44" \
+      org.opencontainers.image.revision="unknown"

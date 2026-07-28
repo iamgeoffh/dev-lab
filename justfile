@@ -10,3 +10,7 @@ build:
 
 test: build
     containers/agent-dev-base/tests/smoke-test.sh "{{image}}"
+
+install-hooks:
+    git config --local core.hooksPath .githooks
+    @echo "Installed repository hooks from .githooks"

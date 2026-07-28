@@ -1,0 +1,149 @@
+name: Publish agent-dev-base
+
+on:
+  push:
+    branches:
+      - main
+
+permissions: {}
+
+# Version creation and floating-tag updates must never race. Current GitHub
+# concurrency supports a FIFO queue instead of discarding an intermediate push.
+concurrency:
+  group: publish-agent-dev-base
+  queue: max
+
+env:
+  LOCAL_IMAGE: localhost/agent-dev-base:fedora-44
+  VERSION_SERIES: "0.1"
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Check out the pushed main commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Verify runner and source revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF}" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          podman --version
+          podman info --format '{{.Host.Security.Rootless}}'
+
+      - name: Derive immutable version and image name
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="v${VERSION_SERIES}.${GITHUB_RUN_NUMBER}"
+          registry_image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/agent-dev-base"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "registry_image=${registry_image}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build with rootless Podman
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          podman build \
+            --pull=always \
+            --tag "${LOCAL_IMAGE}" \
+            --label "org.opencontainers.image.version=${VERSION}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --file containers/agent-dev-base/Containerfile \
+            containers/agent-dev-base
+
+      - name: Run complete smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          containers/agent-dev-base/tests/smoke-test.sh "${LOCAL_IMAGE}"
+
+      - name: Verify publication metadata
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(
+            podman image inspect \
+              --format '{{index .Config.Labels "org.opencontainers.image.version"}}' \
+              "${LOCAL_IMAGE}"
+          )" = "${VERSION}"
+          test "$(
+            podman image inspect \
+              --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+              "${LOCAL_IMAGE}"
+          )" = "${GITHUB_SHA}"
+
+      - name: Tag the exact source commit
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git show-ref --verify --quiet "refs/tags/${VERSION}"; then
+            tagged_commit="$(git rev-list -n 1 "${VERSION}")"
+            test "${tagged_commit}" = "${GITHUB_SHA}"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag \
+              --annotate "${VERSION}" \
+              --message "agent-dev-base ${VERSION}" \
+              "${GITHUB_SHA}"
+            git push origin "refs/tags/${VERSION}"
+          fi
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" |
+            podman login ghcr.io \
+              --username "${GITHUB_ACTOR}" \
+              --password-stdin
+
+      - name: Publish immutable and floating tags
+        env:
+          REGISTRY_IMAGE: ${{ steps.metadata.outputs.registry_image }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          podman tag "${LOCAL_IMAGE}" "${REGISTRY_IMAGE}:${VERSION}"
+          podman push "${REGISTRY_IMAGE}:${VERSION}"
+
+          # A queued older run may finish after main has advanced. Its immutable
+          # version remains useful, but it must not move the floating tags back.
+          git fetch --no-tags origin main
+          if [[ "$(git rev-parse refs/remotes/origin/main)" == "${GITHUB_SHA}" ]]; then
+            for tag in fedora-44 latest; do
+              podman tag "${LOCAL_IMAGE}" "${REGISTRY_IMAGE}:${tag}"
+              podman push "${REGISTRY_IMAGE}:${tag}"
+            done
+          else
+            echo "main advanced; not updating floating tags"
+          fi
+
+          {
+            echo "### Published agent-dev-base"
+            echo
+            echo "- Image: \`${REGISTRY_IMAGE}:${VERSION}\`"
+            echo "- Source tag: \`${VERSION}\`"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
