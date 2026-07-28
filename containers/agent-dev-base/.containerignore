@@ -1,0 +1,6 @@
+# This image does not copy repository content. Keep the build context closed by
+# default so local configuration and credentials cannot enter a future layer
+# accidentally.
+*
+!Containerfile
+!.containerignore

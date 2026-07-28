@@ -1,0 +1,74 @@
+FROM registry.fedoraproject.org/fedora:44
+
+ARG MISE_VERSION=2026.7.13
+ARG MISE_SHA256_X86_64=47878bc295922c5f7ba4b7054cc372ce6ae730a1f12b0753c1cda2f04376eee2
+ARG MISE_SHA256_AARCH64=f115d1f911b8eed1bdc9d889d94ff6fdaf892131d573b5678914b2bcf14b2965
+
+LABEL org.opencontainers.image.title="agent-dev-base" \
+      org.opencontainers.image.description="Headless Fedora base image for coding-agent development containers" \
+      org.opencontainers.image.source="https://github.com/geoff-hill/dev-lab" \
+      org.opencontainers.image.version="fedora-44" \
+      org.opencontainers.image.base.name="registry.fedoraproject.org/fedora:44" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+RUN dnf --assumeyes --setopt=install_weak_deps=False install \
+        bash \
+        bzip2 \
+        ca-certificates \
+        coreutils \
+        curl \
+        diffutils \
+        findutils \
+        gawk \
+        gcc \
+        gcc-c++ \
+        git \
+        git-lfs \
+        grep \
+        gzip \
+        make \
+        patch \
+        pkgconf-pkg-config \
+        procps-ng \
+        sed \
+        tar \
+        unzip \
+        which \
+        xz \
+        zip \
+    && dnf --assumeyes \
+        --setopt=protected_packages= \
+        --setopt=clean_requirements_on_remove=False \
+        remove sudo \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+RUN set -eux; \
+    machine="$(uname -m)"; \
+    case "${machine}" in \
+        x86_64) mise_arch="x64"; mise_sha256="${MISE_SHA256_X86_64}" ;; \
+        aarch64) mise_arch="arm64"; mise_sha256="${MISE_SHA256_AARCH64}" ;; \
+        *) echo "Unsupported architecture: ${machine}" >&2; exit 1 ;; \
+    esac; \
+    curl --fail --location --show-error --silent \
+        --output /tmp/mise \
+        "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-${mise_arch}"; \
+    echo "${mise_sha256}  /tmp/mise" | sha256sum --check --strict -; \
+    install --owner=root --group=root --mode=0755 /tmp/mise /usr/local/bin/mise; \
+    rm --force /tmp/mise; \
+    mise --version
+
+RUN useradd --create-home --no-log-init --shell /bin/bash --uid 1000 dev \
+    && install --directory --owner=dev --group=dev --mode=0755 /workspace
+
+ENV USER=dev \
+    HOME=/home/dev \
+    MISE_DATA_DIR=/home/dev/.local/share/mise \
+    MISE_CACHE_DIR=/home/dev/.cache/mise \
+    MISE_CONFIG_DIR=/home/dev/.config/mise \
+    PATH=/home/dev/.local/share/mise/shims:/home/dev/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+USER dev
+WORKDIR /workspace
+
+CMD ["/bin/bash"]
