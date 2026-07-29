@@ -7,7 +7,8 @@ an SELinux-enforcing Fedora host.
 The image contains:
 
 - mise 2026.7.13, installed from pinned upstream binaries with SHA-256
-  verification on x86_64 and arm64;
+  verification on x86_64 and arm64, and activated in the `dev` user's
+  interactive Bash shells;
 - Git and Git LFS;
 - CA certificates, curl, and common archive utilities;
 - GCC, G++, make, pkg-config, and patch for standard native builds; and
@@ -48,24 +49,25 @@ Advancing `main` starts the repository's publishing workflow. After its first
 successful run, the image is available as:
 
 ```text
-ghcr.io/iamgeoffh/agent-dev-base:<version>
+ghcr.io/iamgeoffh/agent-dev-base:build-<workflow-run-number>
 ```
 
-Each immutable version has the form `v0.1.<workflow-run-number>`. The workflow
-creates an annotated Git tag with the identical name on the exact source
-commit, so `git show <version>` retrieves the source corresponding to a
-registry version. The current hosted workflow publishes `linux/amd64`. It also
-maintains these convenience tags:
+Each immutable image tag has the form `build-<workflow-run-number>`. The
+workflow creates an annotated Git tag named
+`agent-dev-base-build-<workflow-run-number>` on the exact source commit, so
+`git show agent-dev-base-build-<workflow-run-number>` retrieves the
+corresponding source. The current hosted workflow publishes `linux/amd64`. It
+also maintains these convenience tags:
 
 - `fedora-44`, the newest published Fedora 44 build from the current `main`
   tip; and
 - `latest`, currently an alias for `fedora-44`.
 
-For reproducible project images, extend an immutable version rather than a
+For reproducible project images, extend an immutable build rather than a
 floating tag:
 
 ```Containerfile
-FROM ghcr.io/iamgeoffh/agent-dev-base:v0.1.123
+FROM ghcr.io/iamgeoffh/agent-dev-base:build-123
 ```
 
 The first live GHCR publication still depends on the workflow reaching `main`

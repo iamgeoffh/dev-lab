@@ -10,7 +10,7 @@ permissions:
   contents: write
   packages: write
 
-# Version creation and floating-tag updates must never race. Keep the active
+# Build-tag creation and floating-tag updates must never race. Keep the active
 # publication running and retain the newest pending main update.
 concurrency:
   group: publish-agent-dev-base
@@ -18,7 +18,6 @@ concurrency:
 
 env:
   LOCAL_IMAGE: localhost/agent-dev-base:fedora-44
-  VERSION_SERIES: "0.1"
 
 jobs:
   publish:
@@ -43,26 +42,28 @@ jobs:
           podman --version
           podman info --format '{{.Host.Security.Rootless}}'
 
-      - name: Derive immutable version and image name
+      - name: Derive immutable build tag and image name
         id: metadata
         shell: bash
         run: |
           set -euo pipefail
-          version="v${VERSION_SERIES}.${GITHUB_RUN_NUMBER}"
+          image_tag="build-${GITHUB_RUN_NUMBER}"
+          source_tag="agent-dev-base-${image_tag}"
           registry_image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/agent-dev-base"
-          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "image_tag=${image_tag}" >> "${GITHUB_OUTPUT}"
+          echo "source_tag=${source_tag}" >> "${GITHUB_OUTPUT}"
           echo "registry_image=${registry_image}" >> "${GITHUB_OUTPUT}"
 
       - name: Build with rootless Podman
         env:
-          VERSION: ${{ steps.metadata.outputs.version }}
+          IMAGE_TAG: ${{ steps.metadata.outputs.image_tag }}
         shell: bash
         run: |
           set -euo pipefail
           podman build \
             --pull=always \
             --tag "${LOCAL_IMAGE}" \
-            --label "org.opencontainers.image.version=${VERSION}" \
+            --label "org.opencontainers.image.version=${IMAGE_TAG}" \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
             --file containers/agent-dev-base/Containerfile \
             containers/agent-dev-base
@@ -75,7 +76,7 @@ jobs:
 
       - name: Verify publication metadata
         env:
-          VERSION: ${{ steps.metadata.outputs.version }}
+          IMAGE_TAG: ${{ steps.metadata.outputs.image_tag }}
         shell: bash
         run: |
           set -euo pipefail
@@ -83,7 +84,7 @@ jobs:
             podman image inspect \
               --format '{{index .Config.Labels "org.opencontainers.image.version"}}' \
               "${LOCAL_IMAGE}"
-          )" = "${VERSION}"
+          )" = "${IMAGE_TAG}"
           test "$(
             podman image inspect \
               --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
@@ -92,21 +93,22 @@ jobs:
 
       - name: Tag the exact source commit
         env:
-          VERSION: ${{ steps.metadata.outputs.version }}
+          IMAGE_TAG: ${{ steps.metadata.outputs.image_tag }}
+          SOURCE_TAG: ${{ steps.metadata.outputs.source_tag }}
         shell: bash
         run: |
           set -euo pipefail
-          if git show-ref --verify --quiet "refs/tags/${VERSION}"; then
-            tagged_commit="$(git rev-list -n 1 "${VERSION}")"
+          if git show-ref --verify --quiet "refs/tags/${SOURCE_TAG}"; then
+            tagged_commit="$(git rev-list -n 1 "${SOURCE_TAG}")"
             test "${tagged_commit}" = "${GITHUB_SHA}"
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git tag \
-              --annotate "${VERSION}" \
-              --message "agent-dev-base ${VERSION}" \
+              --annotate "${SOURCE_TAG}" \
+              --message "agent-dev-base ${IMAGE_TAG}" \
               "${GITHUB_SHA}"
-            git push origin "refs/tags/${VERSION}"
+            git push origin "refs/tags/${SOURCE_TAG}"
           fi
 
       - name: Log in to GHCR
@@ -123,16 +125,17 @@ jobs:
       - name: Publish immutable and floating tags
         env:
           REGISTRY_IMAGE: ${{ steps.metadata.outputs.registry_image }}
-          VERSION: ${{ steps.metadata.outputs.version }}
+          IMAGE_TAG: ${{ steps.metadata.outputs.image_tag }}
+          SOURCE_TAG: ${{ steps.metadata.outputs.source_tag }}
         shell: bash
         run: |
           set -euo pipefail
 
-          podman tag "${LOCAL_IMAGE}" "${REGISTRY_IMAGE}:${VERSION}"
-          podman push "${REGISTRY_IMAGE}:${VERSION}"
+          podman tag "${LOCAL_IMAGE}" "${REGISTRY_IMAGE}:${IMAGE_TAG}"
+          podman push "${REGISTRY_IMAGE}:${IMAGE_TAG}"
 
           # A queued older run may finish after main has advanced. Its immutable
-          # version remains useful, but it must not move the floating tags back.
+          # build remains useful, but it must not move the floating tags back.
           git fetch --no-tags origin main
           if [[ "$(git rev-parse refs/remotes/origin/main)" == "${GITHUB_SHA}" ]]; then
             for tag in fedora-44 latest; do
@@ -146,7 +149,7 @@ jobs:
           {
             echo "### Published agent-dev-base"
             echo
-            echo "- Image: \`${REGISTRY_IMAGE}:${VERSION}\`"
-            echo "- Source tag: \`${VERSION}\`"
+            echo "- Image: \`${REGISTRY_IMAGE}:${IMAGE_TAG}\`"
+            echo "- Source tag: \`${SOURCE_TAG}\`"
             echo "- Commit: \`${GITHUB_SHA}\`"
           } >> "${GITHUB_STEP_SUMMARY}"

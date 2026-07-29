@@ -25,17 +25,18 @@ avoids consuming hosted-runner minutes.
 When `main` advances, `.github/workflows/publish-agent-dev-base.yml` builds and
 smoke-tests the image with rootless Podman. A successful run:
 
-1. assigns `v0.1.<workflow-run-number>`;
-2. creates an annotated Git tag with that exact version on the pushed commit;
-3. publishes `ghcr.io/iamgeoffh/agent-dev-base:<version>`; and
+1. assigns the immutable image tag `build-<workflow-run-number>`;
+2. creates the annotated Git tag
+   `agent-dev-base-build-<workflow-run-number>` on the pushed commit;
+3. publishes
+   `ghcr.io/iamgeoffh/agent-dev-base:build-<workflow-run-number>`; and
 4. updates the `fedora-44` and `latest` floating tags only when the commit is
    still the remote `main` tip.
 
 Workflow runs are serialized, and rerunning a partially failed workflow reuses
-the same version and source tag. Authentication uses the repository-scoped
+the same build and source tags. GitHub assigns the monotonically increasing
+workflow run number automatically. Authentication uses the repository-scoped
 `GITHUB_TOKEN`; no registry token is stored as a repository secret.
-The patch component is automatic; changing the `VERSION_SERIES` workflow
-constant is the deliberate mechanism for starting a new major or minor series.
 
 Before the first publication, configure the repository to allow GitHub Actions,
 ensure workflow tokens may receive the declared `contents: write` and

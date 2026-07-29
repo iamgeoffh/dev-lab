@@ -58,6 +58,7 @@ RUN set -eux; \
     mise --version
 
 RUN useradd --create-home --no-log-init --shell /bin/bash --uid 1000 dev \
+    && printf '%s\n' 'eval "$(mise activate bash)"' >> /home/dev/.bashrc \
     && install --directory --owner=dev --group=dev --mode=0755 /workspace
 
 ENV USER=dev \

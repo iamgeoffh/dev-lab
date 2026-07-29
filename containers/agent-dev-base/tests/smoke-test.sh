@@ -37,6 +37,10 @@ podman run --rm \
         rm -f "${home_probe}" "${work_probe}"
 
         [[ "$(mise --version | awk "{print \$1}")" == "2026.7.13" ]]
+        bash -ic '"'"'
+            [[ "${MISE_SHELL}" == "bash" ]]
+            [[ "$(type -t mise)" == "function" ]]
+        '"'"'
         git --version >/dev/null
         git lfs version >/dev/null
         curl --version >/dev/null
