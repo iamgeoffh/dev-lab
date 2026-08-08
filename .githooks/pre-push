@@ -24,4 +24,4 @@ if [[ "${run_tests}" == "false" ]]; then
 fi
 
 echo "pre-push: testing agent-dev-base before non-main branch update"
-just test
+just containers test

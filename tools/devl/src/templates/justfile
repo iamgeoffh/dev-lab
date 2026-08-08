@@ -1,0 +1,19 @@
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+mod git "just/git.just"
+mod human "just/human.just"
+mod agent "just/agent.just"
+
+repo_root := justfile_directory()
+
+# List public repository commands.
+default:
+    @just --list --list-submodules
+
+# Run the generic scaffold checks. Add application checks here.
+check:
+    @cd '{{ repo_root }}' && bash -n \
+        .devcontainer/post-create.sh \
+        scripts/workspace-container \
+        scripts/workspace-git
+

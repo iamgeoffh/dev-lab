@@ -1,0 +1,5 @@
+FROM ghcr.io/iamgeoffh/agent-dev-base:fedora-44@sha256:d4d3841700c1754f39d3f9d23518e83fe138cd637a64a18569b0a2e63999fee7
+
+LABEL org.opencontainers.image.title="{{PROJECT_NAME}}-agent-dev" \
+      org.opencontainers.image.description="Contained development environment for {{PROJECT_NAME}}"
+

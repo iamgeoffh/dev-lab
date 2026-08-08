@@ -2,6 +2,30 @@
 
 Containers, compose files, and other tools and templates to help me develop software and agentic apps.
 
+## `devl` CLI
+
+The Rust workspace under `tools/` builds the `devl` command from `tools/devl/`.
+Its first command
+creates a clean development-lab project from embedded, generalized templates:
+
+```sh
+mise exec -- cargo run --manifest-path tools/Cargo.toml -- init /path/to/new-project
+```
+
+The destination must be new or empty. `devl init` does not overwrite files,
+initialize Git, install tools, download artifacts, or start containers. The
+generated project uses rootless Podman, an unprivileged container user, locked
+generic tools, and an offline clone for agent work. Review its generated
+`README.md`, executable configuration, and trust boundaries before using it.
+
+Run the CLI checks separately from the base-image smoke test:
+
+```sh
+just devl check
+```
+
+The other CLI commands are `just devl build` and `just devl test`.
+
 ## Local validation
 
 Install the repository-managed Git hooks once per clone:
@@ -10,11 +34,23 @@ Install the repository-managed Git hooks once per clone:
 just install-hooks
 ```
 
-The pre-push hook runs `just test` before a push that updates any remote branch
-other than `main`. Pushes that update only `main`, tags, or deletions skip the
-local test. Git hooks are a developer guardrail rather than an access-control
-boundary: `git push --no-verify` bypasses them. Treat changes below
-`.githooks/` as executable code and review them before pushing.
+The pre-push hook runs `just containers test` before a push that updates any
+remote branch other than `main`. Pushes that update only `main`, tags, or
+deletions skip the local test. Git hooks are a developer guardrail rather than
+an access-control boundary: `git push --no-verify` bypasses them. Treat changes
+below `.githooks/` as executable code and review them before pushing.
+
+Container commands are namespaced by collection and image:
+
+```sh
+just containers build
+just containers test
+just containers agent-dev-base build
+just containers agent-dev-base test
+```
+
+The collection commands operate on every maintained image; currently that is
+only `agent-dev-base`.
 
 There is intentionally no GitHub Actions workflow for feature-branch pushes or
 pull requests. This keeps routine validation on the developer's machine and

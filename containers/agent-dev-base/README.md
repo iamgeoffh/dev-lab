@@ -24,9 +24,12 @@ identity, and user-specific configuration.
 From the repository root, the canonical commands are:
 
 ```sh
-just build
-just test
+just containers agent-dev-base build
+just containers agent-dev-base test
 ```
+
+The aggregate `just containers build` and `just containers test` commands run
+the corresponding operation for every maintained container image.
 
 The equivalent exact Podman commands are:
 

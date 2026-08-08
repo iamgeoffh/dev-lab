@@ -1,15 +1,11 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-image := "localhost/agent-dev-base:fedora-44"
+mod containers "just/containers.just"
+mod devl "just/devl.just"
 
-build:
-    podman build \
-        --tag "{{image}}" \
-        --file containers/agent-dev-base/Containerfile \
-        containers/agent-dev-base
-
-test: build
-    containers/agent-dev-base/tests/smoke-test.sh "{{image}}"
+# List repository commands and component submodules.
+default:
+    @just --list --list-submodules
 
 install-hooks:
     git config --local core.hooksPath .githooks

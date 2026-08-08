@@ -1,5 +1,6 @@
 # Machine-specific mise overrides
 mise.local.toml
+mise.local.lock
 
 # Local environment and secrets
 .env
@@ -8,9 +9,7 @@ mise.local.toml
 
 # Temporary output
 *.log
-*.swp
 .tmp/
-tmp/
+coverage/
+dist/
 
-# Rust build output
-tools/target/

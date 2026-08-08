@@ -1,0 +1,19 @@
+[package]
+name = "devl"
+version = "0.1.0"
+description = "Create clean, contained development labs"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "devl"
+path = "src/main.rs"
+

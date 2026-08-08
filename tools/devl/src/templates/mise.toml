@@ -1,0 +1,6 @@
+[tools]
+codex = "latest"
+devcontainer-cli = "latest"
+just = "latest"
+node = "24" # Runtime required by devcontainer-cli's npm distribution.
+rg = "latest"

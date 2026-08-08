@@ -1,0 +1,369 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+git_in() {
+  local path="$1"
+  shift
+  git -C "$path" "$@"
+}
+
+role_of() {
+  git_in "$1" config --local --get workspace.role 2>/dev/null || true
+}
+
+require_role() {
+  local expected="$1"
+  local path="${2:-$repo_root}"
+  local actual
+  actual="$(role_of "$path")"
+  [[ "$actual" == "$expected" ]] ||
+    die "$path must have local Git config workspace.role=$expected (found ${actual:-unset})"
+}
+
+require_repo() {
+  local path="$1"
+  [[ -d "$path" ]] || die "clone path does not exist: $path"
+  git_in "$path" rev-parse --git-dir >/dev/null 2>&1 ||
+    die "not a Git working clone: $path"
+}
+
+require_branch() {
+  local expected="$1"
+  local path="${2:-$repo_root}"
+  local actual
+  actual="$(git_in "$path" branch --show-current)"
+  [[ "$actual" == "$expected" ]] ||
+    die "$path must be on $expected (found ${actual:-detached HEAD})"
+}
+
+require_clean() {
+  local path="${1:-$repo_root}"
+  [[ -z "$(git_in "$path" status --porcelain=v1)" ]] ||
+    die "$path has tracked or untracked changes; commit or clean them explicitly first"
+}
+
+require_ref() {
+  local ref="$1"
+  local path="${2:-$repo_root}"
+  git_in "$path" rev-parse --verify --quiet "${ref}^{commit}" >/dev/null ||
+    die "required ref is missing: $ref"
+}
+
+configured_agent_clone() {
+  local path
+  path="$(git_in "$repo_root" config --local --get workspace.agent-clone 2>/dev/null || true)"
+  [[ -n "$path" ]] ||
+    die "workspace.agent-clone is unset; run: just human bootstrap PATH"
+  [[ "$path" = /* ]] || die "workspace.agent-clone must be an absolute path: $path"
+  require_repo "$path"
+  printf '%s\n' "$path"
+}
+
+require_offline_agent() {
+  local path="$1"
+  require_role agent "$path"
+  local remotes
+  remotes="$(git_in "$path" remote)"
+  [[ -z "$remotes" ]] ||
+    die "agent clone must have no remotes (found: $(tr '\n' ' ' <<<"$remotes"))"
+}
+
+confirm_exact() {
+  local token="$1"
+  local answer="${WORKSPACE_CONFIRM:-}"
+  if [[ -z "$answer" ]]; then
+    printf 'Type %s to continue: ' "$token" >&2
+    IFS= read -r answer
+  fi
+  [[ "$answer" == "$token" ]] || die "confirmation did not match; no changes made"
+}
+
+show_ref() {
+  local label="$1"
+  local ref="$2"
+  local path="${3:-$repo_root}"
+  local value
+  value="$(git_in "$path" rev-parse --short "$ref" 2>/dev/null || true)"
+  printf '%-24s %s\n' "$label" "${value:-missing}"
+}
+
+inspect_status() {
+  printf 'repository               %s\n' "$repo_root"
+  printf 'role                     %s\n' "$(role_of "$repo_root")"
+  printf 'branch                   %s\n' "$(git_in "$repo_root" branch --show-current)"
+  printf 'tree                     '
+  if [[ -z "$(git_in "$repo_root" status --porcelain=v1)" ]]; then
+    printf 'clean\n'
+  else
+    printf 'dirty\n'
+    git_in "$repo_root" status --short
+  fi
+  printf 'agent clone              %s\n' \
+    "$(git_in "$repo_root" config --local --get workspace.agent-clone 2>/dev/null || printf 'unset')"
+  show_ref "main" refs/heads/main
+  show_ref "origin/main" refs/remotes/origin/main
+  show_ref "human/main" refs/remotes/human/main
+  show_ref "agent/codex branch" refs/heads/agent/codex
+  show_ref "prepared handoff" refs/handoffs/codex
+  show_ref "received handoff" refs/remotes/agent/codex
+}
+
+difftool() {
+  local base="$1"
+  local head="$2"
+  command -v meld >/dev/null || die "meld is not installed or not on PATH"
+  require_ref "$base"
+  require_ref "$head"
+  GIT_DIFFTOOL_LEFT_LABEL="$base" \
+    GIT_DIFFTOOL_RIGHT_LABEL="$head" \
+    git_in "$repo_root" difftool --dir-diff --no-prompt "$base...$head"
+}
+
+agent_log() {
+  local role human_ref agent_ref
+  role="$(role_of "$repo_root")"
+  case "$role" in
+    human)
+      human_ref="refs/heads/main"
+      agent_ref="refs/remotes/agent/codex"
+      ;;
+    agent)
+      human_ref="refs/remotes/human/main"
+      agent_ref="refs/heads/agent/codex"
+      ;;
+    *) die "workspace.role must be human or agent (found ${role:-unset})" ;;
+  esac
+
+  require_ref "$human_ref"
+  printf 'human: %s\n' "$human_ref"
+  if git_in "$repo_root" rev-parse --verify --quiet "${agent_ref}^{commit}" >/dev/null; then
+    printf 'agent: %s\n\n' "$agent_ref"
+    git_in "$repo_root" log --graph --oneline --decorate --topo-order \
+      "$human_ref" "$agent_ref" --
+  else
+    printf 'agent: %s (not received/prepared yet)\n\n' "$agent_ref"
+    git_in "$repo_root" log --graph --oneline --decorate --topo-order \
+      "$human_ref" --
+  fi
+}
+
+human_bootstrap() {
+  require_role human
+  require_branch main
+  require_clean
+
+  local supplied="$1"
+  [[ "$supplied" = /* ]] || die "bootstrap path must be absolute"
+  local agent_path
+  agent_path="$(cd -- "$supplied" 2>/dev/null && pwd)" ||
+    die "clone path does not exist: $supplied"
+  [[ "$agent_path" != "$repo_root" ]] || die "agent clone cannot be the human clone"
+  require_repo "$agent_path"
+  require_clean "$agent_path"
+  local target_role
+  target_role="$(role_of "$agent_path")"
+  [[ -z "$target_role" || "$target_role" == agent ]] ||
+    die "refusing to bootstrap a clone marked workspace.role=$target_role"
+
+  printf 'BOOTSTRAP SAFETY REPORT\n'
+  printf '  human clone: %s\n' "$repo_root"
+  printf '  agent clone: %s\n' "$agent_path"
+  printf '  agent HEAD:  %s\n' "$(git_in "$agent_path" rev-parse --short HEAD)"
+  printf '  tree:        clean\n'
+  printf '  remotes to remove:\n'
+  git_in "$agent_path" remote -v || true
+  printf '  clone deletion: never\n'
+  confirm_exact "BOOTSTRAP:$agent_path"
+
+  local remote
+  while IFS= read -r remote; do
+    git_in "$agent_path" remote remove "$remote"
+  done < <(git_in "$agent_path" remote)
+  git_in "$agent_path" config --local workspace.role agent
+  git_in "$agent_path" config --local credential.helper ''
+  git_in "$agent_path" config --local credential.interactive false
+  git_in "$agent_path" fetch "$repo_root" \
+    'refs/heads/main:refs/remotes/human/main'
+  if git_in "$agent_path" show-ref --verify --quiet refs/heads/agent/codex; then
+    git_in "$agent_path" switch agent/codex
+  else
+    git_in "$agent_path" switch --create agent/codex refs/remotes/human/main
+  fi
+  git_in "$repo_root" config --local workspace.agent-clone "$agent_path"
+  printf 'Bootstrap complete. The agent clone has no remotes.\n'
+}
+
+human_from_github() {
+  require_role human
+  require_branch main
+  require_clean
+  git_in "$repo_root" fetch origin 'refs/heads/main:refs/remotes/origin/main'
+  git_in "$repo_root" merge --ff-only refs/remotes/origin/main
+}
+
+human_to_agent() {
+  require_role human
+  require_branch main
+  require_clean
+  local agent_path
+  agent_path="$(configured_agent_clone)"
+  require_offline_agent "$agent_path"
+  require_branch agent/codex "$agent_path"
+  git_in "$agent_path" fetch "$repo_root" \
+    'refs/heads/main:refs/remotes/human/main'
+  show_ref "supplied human/main" refs/remotes/human/main "$agent_path"
+}
+
+human_from_agent() {
+  require_role human
+  require_branch main
+  require_clean
+  local agent_path
+  agent_path="$(configured_agent_clone)"
+  require_offline_agent "$agent_path"
+  require_ref refs/handoffs/codex "$agent_path"
+  git_in "$repo_root" fetch "$agent_path" \
+    'refs/handoffs/codex:refs/remotes/agent/codex'
+  show_ref "received agent/codex" refs/remotes/agent/codex
+}
+
+human_inspect_agent() {
+  require_role human
+  require_ref refs/remotes/agent/codex
+  difftool refs/heads/main refs/remotes/agent/codex
+}
+
+human_agent_to_main() {
+  require_role human
+  require_branch main
+  require_clean
+  require_ref refs/remotes/agent/codex
+  git_in "$repo_root" merge-base --is-ancestor \
+    refs/heads/main refs/remotes/agent/codex ||
+    die "received handoff is not a fast-forward of human main"
+  git_in "$repo_root" merge --ff-only refs/remotes/agent/codex
+}
+
+human_push_main() {
+  require_role human
+  require_branch main
+  require_clean
+  git_in "$repo_root" fetch origin 'refs/heads/main:refs/remotes/origin/main'
+  require_ref refs/remotes/origin/main
+  if ! git_in "$repo_root" merge-base --is-ancestor \
+      refs/remotes/origin/main refs/heads/main; then
+    if git_in "$repo_root" merge-base --is-ancestor \
+        refs/heads/main refs/remotes/origin/main; then
+      die "human main is behind origin/main; run just human from-github"
+    fi
+    die "human main and origin/main have diverged; resolve manually"
+  fi
+  (cd "$repo_root" && just check)
+  git_in "$repo_root" push origin 'refs/heads/main:refs/heads/main'
+}
+
+agent_status() {
+  require_role agent
+  require_offline_agent "$repo_root"
+  inspect_status
+  if git_in "$repo_root" show-ref --verify --quiet refs/remotes/human/main; then
+    printf '\nCommits on agent/codex after human/main:\n'
+    git_in "$repo_root" log --oneline \
+      refs/remotes/human/main..refs/heads/agent/codex 2>/dev/null || true
+  fi
+}
+
+agent_from_human() {
+  require_role agent
+  require_offline_agent "$repo_root"
+  require_branch agent/codex
+  require_clean
+  require_ref refs/remotes/human/main
+  git_in "$repo_root" rebase refs/remotes/human/main
+}
+
+agent_to_human() {
+  require_role agent
+  require_offline_agent "$repo_root"
+  require_branch agent/codex
+  require_clean
+  require_ref refs/remotes/human/main
+  git_in "$repo_root" merge-base --is-ancestor \
+    refs/remotes/human/main HEAD ||
+    die "agent/codex is not based on human/main; run just agent from-human"
+  [[ "$(git_in "$repo_root" rev-list --count refs/remotes/human/main..HEAD)" -gt 0 ]] ||
+    die "agent/codex has no committed work after human/main"
+  if git_in "$repo_root" show-ref --verify --quiet refs/handoffs/codex; then
+    git_in "$repo_root" merge-base --is-ancestor refs/handoffs/codex HEAD ||
+      die "new handoff would replace unrelated prepared work"
+  fi
+  (cd "$repo_root" && just check)
+  local previous
+  if git_in "$repo_root" show-ref --verify --quiet refs/handoffs/codex; then
+    previous="$(git_in "$repo_root" rev-parse refs/handoffs/codex)"
+  else
+    previous="0000000000000000000000000000000000000000"
+  fi
+  git_in "$repo_root" update-ref refs/handoffs/codex HEAD "$previous"
+  show_ref "prepared handoff" refs/handoffs/codex
+}
+
+human_dispose() {
+  require_role human
+  require_branch main
+  require_clean
+  local agent_path
+  agent_path="$(configured_agent_clone)"
+  require_offline_agent "$agent_path"
+  require_branch agent/codex "$agent_path"
+  require_clean "$agent_path"
+  require_ref refs/heads/agent/codex "$agent_path"
+  require_ref refs/remotes/agent/codex
+  local agent_head received
+  agent_head="$(git_in "$agent_path" rev-parse refs/heads/agent/codex)"
+  received="$(git_in "$repo_root" rev-parse refs/remotes/agent/codex)"
+  [[ "$agent_head" == "$received" ]] ||
+    die "agent branch and received handoff differ; receive the latest handoff"
+  git_in "$repo_root" merge-base --is-ancestor "$received" refs/heads/main ||
+    die "received agent handoff has not been landed on human main"
+
+  printf 'DISPOSAL SAFETY REPORT\n'
+  printf '  target clone:       %s\n' "$agent_path"
+  printf '  clean tree:         yes\n'
+  printf '  agent HEAD received:%s\n' " ${received:0:12}"
+  printf '  handoff landed:     yes\n'
+  printf '  action:             permanently delete target clone\n'
+  printf '  human clone:        untouched\n'
+  confirm_exact "DELETE:$agent_path"
+  WORKSPACE_CONFIRM="DOWN:$agent_path" \
+    "$repo_root/scripts/workspace-container" down-if-present
+  rm -rf -- "$agent_path"
+  git_in "$repo_root" config --local --unset workspace.agent-clone
+  printf 'Deleted agent clone: %s (recoverable only from received Git history).\n' \
+    "$agent_path"
+}
+
+case "${1:-}" in
+  inspect-status) inspect_status ;;
+  difftool) shift; difftool "$@" ;;
+  agent-log) agent_log ;;
+  human-bootstrap) shift; human_bootstrap "$@" ;;
+  human-from-github) human_from_github ;;
+  human-to-agent) human_to_agent ;;
+  human-from-agent) human_from_agent ;;
+  human-inspect-agent) human_inspect_agent ;;
+  human-agent-to-main) human_agent_to_main ;;
+  human-push-main) human_push_main ;;
+  human-dispose) human_dispose ;;
+  agent-status) agent_status ;;
+  agent-from-human) agent_from_human ;;
+  agent-to-human) agent_to_human ;;
+  *) die "unknown command: ${1:-missing}" ;;
+esac

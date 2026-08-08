@@ -15,11 +15,14 @@ Keep each independently buildable image below containers/:
 containers/
 └── agent-dev-base/
     ├── Containerfile
+    ├── justfile
     ├── README.md
     ├── .containerignore
     └── tests/
 
-Put repository-wide commands in the root justfile. Keep image-specificdocumentation and tests with the image.
+Keep the Rust workspace under tools/ and each tool in its own workspace member,
+such as tools/devl/. Put repository-wide module declarations in the root
+justfile. Keep image-specific recipes, documentation, and tests with the image.
 
 Working agreements
 
@@ -99,16 +102,23 @@ Treat the build context, lifecycle hooks, mise configuration, packagescripts, an
 
 Canonical commands
 
-Expose routine operations through root just recipes:
+Expose routine operations through namespaced just modules:
 
-just build
-just test
+just devl build
+just devl test
+just devl check
+just containers build
+just containers test
+just containers agent-dev-base build
+just containers agent-dev-base test
 
 The recipes must use rootless-compatible Podman commands and a local image nameof:
 
 localhost/agent-dev-base:fedora-44
 
-If command names or image names change, update this file, the root justfile,and the image README together.
+Do not add ambiguous root build or test recipes. If command names or image
+names change, update this file, the Just modules, hooks, workflows, and relevant
+READMEs together.
 
 Verification
 

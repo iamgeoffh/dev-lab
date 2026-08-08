@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+codex_volume="{{PROJECT_NAME}}-codex"
+
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+require_human_and_agent() {
+  local role agent_role agent_branch
+  role="$(git -C "$repo_root" config --local --get workspace.role 2>/dev/null || true)"
+  [[ "$role" == human ]] ||
+    die "human clone must have local Git config workspace.role=human"
+
+  agent_path="$(git -C "$repo_root" config --local --get workspace.agent-clone 2>/dev/null || true)"
+  [[ "$agent_path" = /* && -d "$agent_path" ]] ||
+    die "workspace.agent-clone must name an existing absolute path"
+  git -C "$agent_path" rev-parse --git-dir >/dev/null 2>&1 ||
+    die "configured agent clone is not a Git working clone: $agent_path"
+  agent_role="$(git -C "$agent_path" config --local --get workspace.role 2>/dev/null || true)"
+  [[ "$agent_role" == agent ]] ||
+    die "configured clone must have local Git config workspace.role=agent"
+  [[ "$agent_path" != "$repo_root" ]] ||
+    die "container target cannot be the human clone"
+  agent_branch="$(git -C "$agent_path" branch --show-current)"
+  [[ "$agent_branch" == agent/codex ]] ||
+    die "configured agent clone must be on agent/codex (found ${agent_branch:-detached HEAD})"
+
+  command -v podman >/dev/null || die "podman is not installed or not on PATH"
+  container_engine="$(command -v podman)"
+  container_label="devcontainer.local_folder=$agent_path"
+}
+
+container_ids() {
+  "$container_engine" ps --all --quiet --filter "label=$container_label"
+}
+
+confirm_exact() {
+  local token="$1"
+  local answer="${WORKSPACE_CONFIRM:-}"
+  if [[ -z "$answer" ]]; then
+    printf 'Type %s to continue: ' "$token" >&2
+    IFS= read -r answer
+  fi
+  [[ "$answer" == "$token" ]] || die "confirmation did not match; no changes made"
+}
+
+up() {
+  require_human_and_agent
+  devcontainer up --docker-path "$container_engine" --workspace-folder "$agent_path"
+}
+
+config() {
+  require_human_and_agent
+  devcontainer read-configuration \
+    --docker-path "$container_engine" \
+    --workspace-folder "$agent_path"
+}
+
+status() {
+  require_human_and_agent
+  "$container_engine" ps --all \
+    --filter "label=$container_label" \
+    --format 'table {{.ID}}\t{{.Status}}\t{{.Ports}}\t{{.Names}}'
+}
+
+build() {
+  require_human_and_agent
+  devcontainer build \
+    --docker-path "$container_engine" \
+    --workspace-folder "$agent_path"
+}
+
+rebuild() {
+  require_human_and_agent
+  printf 'CONTAINER REBUILD SAFETY REPORT\n'
+  printf '  target workspace: %s\n' "$agent_path"
+  printf '  human workspace:  never mounted\n'
+  printf '  replacement:      existing agent container only\n'
+  confirm_exact "REBUILD:$agent_path"
+  devcontainer up \
+    --docker-path "$container_engine" \
+    --workspace-folder "$agent_path" \
+    --remove-existing-container
+}
+
+shell_in() {
+  require_human_and_agent
+  devcontainer exec \
+    --docker-path "$container_engine" \
+    --workspace-folder "$agent_path" \
+    bash
+}
+
+zed_in() {
+  require_human_and_agent
+  command -v zed >/dev/null || die "zed is not installed or not on PATH"
+  devcontainer up \
+    --docker-path "$container_engine" \
+    --workspace-folder "$agent_path"
+  zed -n "$agent_path"
+}
+
+logs() {
+  require_human_and_agent
+  local id
+  id="$(container_ids | head -n 1)"
+  [[ -n "$id" ]] || die "no devcontainer found for $agent_path"
+  "$container_engine" logs --follow "$id"
+}
+
+stop_container() {
+  require_human_and_agent
+  local ids
+  ids="$(container_ids)"
+  [[ -n "$ids" ]] || die "no devcontainer found for $agent_path"
+  "$container_engine" stop $ids
+}
+
+down() {
+  require_human_and_agent
+  local ids
+  ids="$(container_ids)"
+  if [[ -z "$ids" ]]; then
+    printf 'No devcontainer found for %s.\n' "$agent_path"
+    return
+  fi
+  printf 'CONTAINER REMOVAL SAFETY REPORT\n'
+  printf '  target workspace: %s\n' "$agent_path"
+  printf '  containers:       %s\n' "$(tr '\n' ' ' <<<"$ids")"
+  printf '  named volumes:    preserved\n'
+  confirm_exact "DOWN:$agent_path"
+  # Word splitting is intentional: Podman accepts each newline-delimited ID.
+  # shellcheck disable=SC2086
+  "$container_engine" rm --force $ids
+}
+
+login() {
+  require_human_and_agent
+  devcontainer exec \
+    --docker-path "$container_engine" \
+    --workspace-folder "$agent_path" \
+    codex login --device-auth
+}
+
+reset_codex() {
+  require_human_and_agent
+  if ! "$container_engine" volume inspect "$codex_volume" >/dev/null 2>&1; then
+    printf 'Codex volume %s does not exist.\n' "$codex_volume"
+    return
+  fi
+  printf 'CODEX PROFILE REMOVAL SAFETY REPORT\n'
+  printf '  target workspace: %s\n' "$agent_path"
+  printf '  volume:           %s\n' "$codex_volume"
+  printf '  action:           permanently delete Codex credentials and state\n'
+  printf '  source clone:     preserved\n'
+  confirm_exact "RESET-CODEX:$codex_volume"
+  local ids
+  ids="$(container_ids)"
+  if [[ -n "$ids" ]]; then
+    # Word splitting is intentional: Podman accepts each newline-delimited ID.
+    # shellcheck disable=SC2086
+    "$container_engine" rm --force $ids
+  fi
+  "$container_engine" volume rm "$codex_volume"
+}
+
+case "${1:-}" in
+  config) config ;;
+  status) status ;;
+  build) build ;;
+  up) up ;;
+  rebuild) rebuild ;;
+  shell) shell_in ;;
+  zed) zed_in ;;
+  logs) logs ;;
+  stop) stop_container ;;
+  down|down-if-present) down ;;
+  login) login ;;
+  reset-codex) reset_codex ;;
+  *) die "unknown command: ${1:-missing}" ;;
+esac
